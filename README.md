@@ -107,45 +107,6 @@ Klik terminal yang bersangkutan lalu tekan **Ctrl + C**. Lakukan di kedua termin
 
 ---
 
-## 5. Cara memakai
-
-### Pengunjung
-
-1. **Pilih gedung** di halaman utama.
-2. **Unggah foto** parkiran: tarik dan lepas foto ke kotak unggah, atau tekan *Pilih foto* (JPG, PNG, WEBP).
-3. Periksa **posisi lot** pada foto. Lot terisi otomatis dari tata letak gedung, dan bisa diubah:
-   - **Pilih / ubah**: klik lot, geser untuk memindah, tarik sudut untuk mengubah ukuran, ganti nama, atau hapus.
-   - **Gambar lot**: tarik kotak di foto untuk menambah lot baru.
-4. Tekan **Deteksi parkir**. Hasilnya berupa foto dengan lot berwarna, ringkasan jumlah lot, dan daftar lot kosong.
-5. Tekan **Ubah posisi lot** untuk memperbaiki lot lalu mendeteksi ulang, atau **Unggah foto baru**.
-
-### Admin (tombol **Kelola** di kanan atas)
-
-- **Kelola gedung**: tambah, ubah nama/lokasi, atau hapus gedung.
-- **Foto acuan**: buka gedung, unggah foto, atur lotnya, lalu pilih *Jadikan foto acuan* lewat menu ⋮ pada foto.
-  Lot di foto acuan dipakai sebagai posisi awal untuk semua foto yang diunggah pengunjung di gedung itu.
-  Hasil terbaik didapat jika foto pengunjung diambil dari sudut kamera yang sama.
-- **Model deteksi**: pilih folder dan file model YOLO (`.pt`), atur ambang *confidence* dan *overlap*,
-  dan ubah alamat server jika backend tidak berjalan di `http://127.0.0.1:8001`.
-  Model bawaan ada di `trial1/`; yang aktif secara default adalah `best_3.pt`.
-
----
-
-## 6. Masalah yang sering terjadi
-
-| Gejala | Penyebab dan solusi |
-|---|---|
-| Header menampilkan **"Sistem tidak terhubung"** atau muncul *"Tidak dapat terhubung ke server"* | Backend belum berjalan. Jalankan Terminal 1 (langkah 4). Pastikan alamat di *Kelola → Model deteksi → Alamat server* adalah `http://127.0.0.1:8001`. |
-| `ModuleNotFoundError: No module named 'fastapi'` (atau `ultralytics`) | Backend dijalankan dengan Python yang salah. Pakai `..\.venv\Scripts\python.exe main.py`, bukan `python main.py`, dan pastikan langkah 3 sudah dilakukan. |
-| `No Python at '...'` saat menjalankan `.venv` | Python yang dipakai saat membuat `.venv` sudah dipindah atau dihapus. Hapus folder `.venv` lalu ulangi langkah 3. |
-| `address already in use` / port 8001 atau 5600 terpakai | Aplikasi sudah berjalan di terminal lain. Tutup dulu (Ctrl + C), atau cari prosesnya dengan `Get-NetTCPConnection -LocalPort 8001` lalu hentikan dengan `Stop-Process -Id <nomor>`. |
-| `flutter` tidak dikenali | Folder `bin` Flutter belum ada di PATH. Tambahkan, atau panggil dengan path lengkap, mis. `C:\Users\<nama>\flutter\bin\flutter.bat`. |
-| Flutter meminta **Developer Mode** | Hanya diperlukan untuk membangun aplikasi Windows desktop. Untuk versi web (Edge/Chrome) peringatan ini bisa diabaikan. |
-| Lot berstatus **anomali** padahal hanya ada satu mobil | Model kadang memberi lebih dari satu kotak pada satu mobil. Coba ubah ambang di *Kelola → Model deteksi*, atau perkecil kotak lot. |
-| Hasil semuanya **kosong** padahal ada mobil | Model yang aktif mungkin tidak punya kelas `car` (mis. `best_2.pt`). Pilih `best_3.pt` di *Kelola → Model deteksi*. |
-
----
-
 ## Struktur folder
 
 ```
