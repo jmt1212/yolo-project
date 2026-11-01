@@ -34,7 +34,11 @@ DEFAULT_SETTINGS = {
     "conf": 0.35,
     "overlap": 0.30,
 }
-DEFAULT_BUILDINGS = ["Gedung T", "Gedung Q", "Gedung W"]
+DEFAULT_BUILDINGS = {
+    "Gedung T": "Kampus Timur",
+    "Gedung Q": "Kampus Pusat",
+    "Gedung W": "Kampus Timur",
+}
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 app = FastAPI(title="Deteksi Lot Parkir")
@@ -71,8 +75,14 @@ def save_db(db):
 def seed_db():
   """Isi awal: Gedung T, Q, W. Gedung Q diberi contoh foto + slot dari trial1."""
   db = {"settings": dict(DEFAULT_SETTINGS), "buildings": [], "photos": []}
-  for name in DEFAULT_BUILDINGS:
-    db["buildings"].append({"id": new_id(), "name": name, "created_at": now_iso()})
+  for name, location in DEFAULT_BUILDINGS.items():
+    db["buildings"].append({
+        "id": new_id(),
+        "name": name,
+        "location": location,
+        "layout_photo_id": None,
+        "created_at": now_iso(),
+    })
 
   sample_img = REPO_DIR / "trial1" / "cropgedq.jpg"
   sample_cfg = REPO_DIR / "trial1" / "slots_config.json"
@@ -81,9 +91,10 @@ def seed_db():
     data = sample_img.read_bytes()
     db["photos"].append(store_photo(gedung_q["id"], sample_img.name, data))
     photo = db["photos"][-1]
-    photo["slots"] = normalize_slots(
-        json.loads(sample_cfg.read_text()), photo["width"], photo["height"]
-    )
+    slots = json.loads(sample_cfg.read_text())
+    for i, slot in enumerate(slots, start=1):
+      slot["label"] = f"Q-{i:02d}"  # kode lot seperti di wireframe, mis. T-01
+    photo["slots"] = normalize_slots(slots, photo["width"], photo["height"])
   save_db(db)
   return db
 
@@ -95,6 +106,10 @@ def load_db():
     return seed_db()
   db = json.loads(DB_PATH.read_text(encoding="utf-8"))
   db["settings"] = {**DEFAULT_SETTINGS, **db.get("settings", {})}
+  for building in db["buildings"]:
+    # Data dari versi sebelumnya belum punya lokasi dan foto acuan.
+    building.setdefault("location", DEFAULT_BUILDINGS.get(building["name"], ""))
+    building.setdefault("layout_photo_id", None)
   return db
 
 
@@ -157,6 +172,42 @@ def photo_summary(photo):
   return out
 
 
+def layout_photo(db, building):
+  """Foto acuan gedung: foto yang dipilih admin, atau foto pertama yang punya slot."""
+  photos = [p for p in db["photos"] if p["building_id"] == building["id"] and p["slots"]]
+  chosen = next((p for p in photos if p["id"] == building.get("layout_photo_id")), None)
+  return chosen or (photos[0] if photos else None)
+
+
+def building_summary(db, building):
+  layout = layout_photo(db, building)
+  return {
+      **building,
+      "layout_photo_id": layout["id"] if layout else None,
+      "lot_count": len(layout["slots"]) if layout else 0,
+      "photo_count": sum(1 for p in db["photos"] if p["building_id"] == building["id"]),
+  }
+
+
+def scale_slots(slots, src_w, src_h, dst_w, dst_h):
+  """Pakai slot dari foto acuan pada foto lain dengan menskalakan koordinatnya.
+
+  Hanya tepat jika kamera, sudut, dan potongan fotonya sama; kalau rasio
+  ukurannya berbeda, kembalikan peringatan.
+  """
+  sx, sy = dst_w / src_w, dst_h / src_h
+  scaled = [
+      {**s, "bbox": [round(s["bbox"][0] * sx), round(s["bbox"][1] * sy),
+                     round(s["bbox"][2] * sx), round(s["bbox"][3] * sy)]}
+      for s in slots
+  ]
+  warning = None
+  if abs(sx - sy) / max(sx, sy) > 0.03:
+    warning = ("Ukuran foto berbeda dengan foto acuan gedung ini, "
+               "sehingga posisi lot mungkin kurang tepat.")
+  return scaled, warning
+
+
 # ---------------------------------------------------------------------------
 # Model & deteksi (logika sama dengan trial1/app.py)
 # ---------------------------------------------------------------------------
@@ -187,7 +238,7 @@ def slot_coverage(car_box, slot_box):
   return (w * h) / slot_area if slot_area > 0 else 0.0
 
 
-def run_detection(photo, model_path, conf, overlap):
+def run_detection(photo, slots_in, model_path, conf, overlap):
   model = get_model(model_path)
   started = time.perf_counter()
   with model_lock:
@@ -208,7 +259,7 @@ def run_detection(photo, model_path, conf, overlap):
 
   slots = []
   counts = {"empty": 0, "occupied": 0, "anomaly": 0}
-  for slot in photo["slots"]:
+  for slot in slots_in:
     matching = sum(1 for car in cars if slot_coverage(car["bbox"], slot["bbox"]) > overlap)
     status = "empty" if matching == 0 else "occupied" if matching == 1 else "anomaly"
     counts[status] += 1
@@ -237,6 +288,13 @@ def run_detection(photo, model_path, conf, overlap):
 
 class BuildingIn(BaseModel):
   name: str
+  location: str = ""
+
+
+class BuildingPatch(BaseModel):
+  name: Optional[str] = None
+  location: Optional[str] = None
+  layout_photo_id: Optional[str] = None
 
 
 class SlotIn(BaseModel):
@@ -332,10 +390,14 @@ def browse(path: Optional[str] = None):
 def get_buildings():
   with db_lock:
     db = load_db()
-  return [
-      {**b, "photo_count": sum(1 for p in db["photos"] if p["building_id"] == b["id"])}
-      for b in db["buildings"]
-  ]
+  return [building_summary(db, b) for b in db["buildings"]]
+
+
+@app.get("/api/buildings/{building_id}")
+def get_building(building_id: str):
+  with db_lock:
+    db = load_db()
+  return building_summary(db, find(db["buildings"], building_id, "Gedung"))
 
 
 def clean_name(name, db, skip_id=None):
@@ -351,20 +413,36 @@ def clean_name(name, db, skip_id=None):
 def add_building(body: BuildingIn):
   with db_lock:
     db = load_db()
-    building = {"id": new_id(), "name": clean_name(body.name, db), "created_at": now_iso()}
+    building = {
+        "id": new_id(),
+        "name": clean_name(body.name, db),
+        "location": body.location.strip(),
+        "layout_photo_id": None,
+        "created_at": now_iso(),
+    }
     db["buildings"].append(building)
     save_db(db)
-  return {**building, "photo_count": 0}
+    return building_summary(db, building)
 
 
 @app.patch("/api/buildings/{building_id}")
-def rename_building(building_id: str, body: BuildingIn):
+def update_building(building_id: str, body: BuildingPatch):
   with db_lock:
     db = load_db()
     building = find(db["buildings"], building_id, "Gedung")
-    building["name"] = clean_name(body.name, db, skip_id=building_id)
+    if body.name is not None:
+      building["name"] = clean_name(body.name, db, skip_id=building_id)
+    if body.location is not None:
+      building["location"] = body.location.strip()
+    if body.layout_photo_id is not None:
+      photo = find(db["photos"], body.layout_photo_id, "Foto")
+      if photo["building_id"] != building_id:
+        raise HTTPException(400, "Foto ini bukan milik gedung tersebut")
+      if not photo["slots"]:
+        raise HTTPException(400, "Foto acuan harus punya slot. Atur slotnya dulu.")
+      building["layout_photo_id"] = photo["id"]
     save_db(db)
-  return building
+    return building_summary(db, building)
 
 
 @app.delete("/api/buildings/{building_id}", status_code=204)
@@ -450,16 +528,34 @@ def detect(photo_id: str, body: DetectIn):
     db = load_db()
     photo = find(db["photos"], photo_id, "Foto")
     settings = db["settings"]
+    # Foto yang slotnya diatur sendiri memakai slot itu; foto lain (mis. unggahan
+    # pengunjung) memakai slot dari foto acuan gedungnya.
+    layout_warning = None
+    if photo["slots"]:
+      slots, source = photo["slots"], "photo"
+    else:
+      building = find(db["buildings"], photo["building_id"], "Gedung")
+      layout = layout_photo(db, building)
+      if layout:
+        slots, layout_warning = scale_slots(
+            layout["slots"], layout["width"], layout["height"], photo["width"], photo["height"]
+        )
+        source = "building"
+      else:
+        slots, source = [], "none"
   model_name = body.model or settings["model"]
   model_path = Path(settings["model_dir"]) / model_name
   if not model_path.is_file():
     raise HTTPException(400, f"Model tidak ditemukan: {model_path}")
   result = run_detection(
       photo,
+      slots,
       model_path,
       body.conf if body.conf is not None else settings["conf"],
       body.overlap if body.overlap is not None else settings["overlap"],
   )
+  result["layout_source"] = source
+  result["layout_warning"] = layout_warning
   with db_lock:
     db = load_db()
     stored = next((p for p in db["photos"] if p["id"] == photo_id), None)

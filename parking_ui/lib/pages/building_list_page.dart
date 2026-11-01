@@ -4,6 +4,7 @@ import '../api.dart';
 import '../common.dart';
 import 'building_page.dart';
 import 'model_page.dart';
+import '../widgets/petra.dart';
 
 /// Halaman utama: daftar gedung.
 class BuildingListPage extends StatefulWidget {
@@ -43,28 +44,63 @@ class _BuildingListPageState extends State<BuildingListPage> {
     await _load();
   }
 
-  Future<void> _add() async {
-    final name = await askText(context, 'Tambah gedung', hint: 'Contoh: Gedung P');
-    if (name == null || name.trim().isEmpty) return;
-    await _run(() => api.addBuilding(name.trim()), '${name.trim()} ditambahkan');
+  /// Dialog nama + lokasi gedung. Mengembalikan null jika dibatalkan.
+  Future<(String, String)?> _askBuilding(String title, {String name = '', String location = ''}) {
+    final nameCtl = TextEditingController(text: name);
+    final locCtl = TextEditingController(text: location);
+    return showDialog<(String, String)>(
+      context: context,
+      builder: (context) {
+        void submit() => Navigator.pop(context, (nameCtl.text.trim(), locCtl.text.trim()));
+        return AlertDialog(
+          title: Text(title),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtl,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Nama gedung', hintText: 'Gedung P'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: locCtl,
+                decoration: const InputDecoration(labelText: 'Lokasi', hintText: 'Kampus Pusat'),
+                onSubmitted: (_) => submit(),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Batal')),
+            FilledButton(onPressed: submit, child: const Text('Simpan')),
+          ],
+        );
+      },
+    );
   }
 
-  Future<void> _rename(Building b) async {
-    final name = await askText(context, 'Ganti nama gedung', initial: b.name);
-    if (name == null || name.trim().isEmpty || name.trim() == b.name) return;
-    await _run(() => api.renameBuilding(b.id, name.trim()), 'Nama diganti menjadi ${name.trim()}');
+  Future<void> _add() async {
+    final input = await _askBuilding('Tambah gedung');
+    if (input == null || input.$1.isEmpty) return;
+    await _run(() => api.addBuilding(input.$1, input.$2), '${input.$1} ditambahkan');
   }
+
+  Future<void> _edit(Building b) async {
+    final input = await _askBuilding('Ubah gedung', name: b.name, location: b.location);
+    if (input == null || input.$1.isEmpty) return;
+    await _run(() => api.updateBuilding(b.id, name: input.$1, location: input.$2), 'Perubahan disimpan');
+  }
+
+  void _openModels() =>
+      Navigator.push(context, MaterialPageRoute(builder: (_) => const ModelPage())).then((_) => _load());
 
   Future<void> _delete(Building b) async {
-    final ok = await confirm(context, 'Hapus ${b.name}?',
-        'Semua foto (${b.photoCount}) dan konfigurasi slotnya ikut terhapus. Tindakan ini tidak bisa dibatalkan.');
+    final ok = await confirm(
+      context,
+      'Hapus ${b.name}?',
+      'Semua foto (${b.photoCount}) dan konfigurasi slotnya ikut terhapus. Tindakan ini tidak bisa dibatalkan.',
+    );
     if (ok) await _run(() => api.deleteBuilding(b.id), '${b.name} dihapus');
-  }
-
-  String _initial(String name) {
-    final words = name.trim().split(RegExp(r'\s+'));
-    final word = words.length > 1 && words.first.toLowerCase() == 'gedung' ? words[1] : words.first;
-    return word.isEmpty ? '?' : word[0].toUpperCase();
   }
 
   @override
@@ -72,14 +108,16 @@ class _BuildingListPageState extends State<BuildingListPage> {
     final buildings = _buildings;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Deteksi Lot Parkir'),
+        title: const Text('Kelola gedung'),
         actions: [
-          IconButton(
-            tooltip: 'Pengaturan model',
-            icon: const Icon(Icons.memory),
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ModelPage()))
-                .then((_) => _load()),
-          ),
+          if (MediaQuery.sizeOf(context).width < 600)
+            IconButton(tooltip: 'Model deteksi', icon: const Icon(Icons.memory), onPressed: _openModels)
+          else
+            TextButton.icon(
+              icon: const Icon(Icons.memory, size: 18),
+              label: const Text('Model deteksi'),
+              onPressed: _openModels,
+            ),
           IconButton(tooltip: 'Muat ulang', icon: const Icon(Icons.refresh), onPressed: _load),
         ],
       ),
@@ -91,35 +129,42 @@ class _BuildingListPageState extends State<BuildingListPage> {
       body: _error != null
           ? ErrorView(message: '$_error\n\nPastikan backend sudah berjalan.', onRetry: _load)
           : buildings == null
-              ? const Center(child: CircularProgressIndicator())
-              : buildings.isEmpty
-                  ? const Center(child: Text('Belum ada gedung. Tekan "Tambah gedung" untuk mulai.'))
-                  : ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
-                      itemCount: buildings.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 8),
-                      itemBuilder: (context, i) {
-                        final b = buildings[i];
-                        return Card(
-                          child: ListTile(
-                            leading: CircleAvatar(child: Text(_initial(b.name))),
-                            title: Text(b.name),
-                            subtitle: Text(b.photoCount == 0 ? 'Belum ada foto' : '${b.photoCount} foto parkiran'),
-                            onTap: () => Navigator.push(
-                                    context, MaterialPageRoute(builder: (_) => BuildingPage(building: b)))
-                                .then((_) => _load()),
-                            trailing: PopupMenuButton<String>(
-                              tooltip: 'Opsi',
-                              onSelected: (v) => v == 'rename' ? _rename(b) : _delete(b),
-                              itemBuilder: (_) => const [
-                                PopupMenuItem(value: 'rename', child: Text('Ganti nama')),
-                                PopupMenuItem(value: 'delete', child: Text('Hapus')),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
+          ? const Center(child: CircularProgressIndicator())
+          : buildings.isEmpty
+          ? const Center(child: Text('Belum ada gedung. Tekan "Tambah gedung" untuk mulai.'))
+          : ListView.separated(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+              itemCount: buildings.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 8),
+              itemBuilder: (context, i) {
+                final b = buildings[i];
+                return Card(
+                  child: ListTile(
+                    leading: BuildingTile(code: b.code, size: 40),
+                    title: Text(b.name),
+                    subtitle: Text(
+                      [
+                        if (b.location.isNotEmpty) b.location,
+                        '${b.photoCount} foto',
+                        b.lotCount == 0 ? 'lot belum diatur' : '${b.lotCount} lot',
+                      ].join(' · '),
                     ),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => BuildingPage(building: b)),
+                    ).then((_) => _load()),
+                    trailing: PopupMenuButton<String>(
+                      tooltip: 'Opsi',
+                      onSelected: (v) => v == 'edit' ? _edit(b) : _delete(b),
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(value: 'edit', child: Text('Ubah nama / lokasi')),
+                        PopupMenuItem(value: 'delete', child: Text('Hapus')),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
     );
   }
 }

@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 
-import 'pages/building_list_page.dart';
+import 'common.dart';
+import 'pages/home_page.dart';
+import 'theme.dart';
 
-void main() => runApp(const ParkingApp());
+void main() {
+  startHealthChecks();
+  runApp(const ParkingApp());
+}
 
 class ParkingApp extends StatelessWidget {
   const ParkingApp({super.key});
@@ -10,11 +15,10 @@ class ParkingApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Deteksi Lot Parkir',
+      title: 'PetraPark · Deteksi Lot Parkir',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(colorSchemeSeed: const Color(0xFF3B6EF0), useMaterial3: true),
-      darkTheme: ThemeData(colorSchemeSeed: const Color(0xFF3B6EF0), brightness: Brightness.dark, useMaterial3: true),
-      home: const BuildingListPage(),
+      theme: buildTheme(),
+      home: const HomePage(),
     );
   }
 }

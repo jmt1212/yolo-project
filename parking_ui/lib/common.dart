@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'api.dart';
@@ -5,25 +7,35 @@ import 'api.dart';
 /// Satu klien API untuk seluruh aplikasi. Alamat bisa diubah di halaman Pengaturan Model.
 final api = ApiClient('http://127.0.0.1:8001');
 
-const statusColors = {
-  'empty': Color(0xFF2E9E5B),
-  'occupied': Color(0xFFD64545),
-  'anomaly': Color(0xFFE0A019),
-};
+/// Status koneksi ke backend untuk indikator "Sistem aktif" di header (null = belum dicek).
+final serverOnline = ValueNotifier<bool?>(null);
 
-const statusLabels = {
-  'empty': 'Kosong',
-  'occupied': 'Terisi',
-  'anomaly': 'Anomali',
-};
+Timer? _healthTimer;
+
+void startHealthChecks() {
+  Future<void> check() async {
+    try {
+      await api.health();
+      serverOnline.value = true;
+    } on ApiException {
+      serverOnline.value = false;
+    }
+  }
+
+  check();
+  _healthTimer ??= Timer.periodic(const Duration(seconds: 15), (_) => check());
+}
+
+const statusColors = {'empty': Color(0xFF2E9E5B), 'occupied': Color(0xFFD64545), 'anomaly': Color(0xFFE0A019)};
+
+const statusLabels = {'empty': 'Kosong', 'occupied': 'Terisi', 'anomaly': 'Anomali'};
 
 void showMessage(BuildContext context, String message, {bool error = false}) {
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(
-      content: Text(message),
-      backgroundColor: error ? Theme.of(context).colorScheme.error : null,
-    ));
+    ..showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: error ? Theme.of(context).colorScheme.error : null),
+    );
 }
 
 Future<bool> confirm(BuildContext context, String title, String message, {String action = 'Hapus'}) async {
@@ -72,13 +84,16 @@ class ErrorView extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.cloud_off, size: 48, color: Theme.of(context).colorScheme.error),
-          const SizedBox(height: 12),
-          Text(message, textAlign: TextAlign.center),
-          const SizedBox(height: 12),
-          FilledButton.icon(onPressed: onRetry, icon: const Icon(Icons.refresh), label: const Text('Coba lagi')),
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off, size: 48, color: Theme.of(context).colorScheme.error),
+            const SizedBox(height: 12),
+            Text(message, textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            FilledButton.icon(onPressed: onRetry, icon: const Icon(Icons.refresh), label: const Text('Coba lagi')),
+          ],
+        ),
       ),
     );
   }
@@ -92,14 +107,14 @@ class SummaryChips extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     Widget chip(String key, int value) => Chip(
-          avatar: CircleAvatar(backgroundColor: statusColors[key], radius: 6),
-          label: Text('$value ${statusLabels[key]!.toLowerCase()}'),
-          visualDensity: VisualDensity.compact,
-        );
-    return Wrap(spacing: 6, runSpacing: 6, children: [
-      chip('empty', summary.empty),
-      chip('occupied', summary.occupied),
-      chip('anomaly', summary.anomaly),
-    ]);
+      avatar: CircleAvatar(backgroundColor: statusColors[key], radius: 6),
+      label: Text('$value ${statusLabels[key]!.toLowerCase()}'),
+      visualDensity: VisualDensity.compact,
+    );
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [chip('empty', summary.empty), chip('occupied', summary.occupied), chip('anomaly', summary.anomaly)],
+    );
   }
 }

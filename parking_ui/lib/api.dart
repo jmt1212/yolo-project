@@ -10,8 +10,7 @@ class ApiClient {
 
   String baseUrl;
 
-  Uri _uri(String path, [Map<String, String>? query]) =>
-      Uri.parse('$baseUrl$path').replace(queryParameters: query);
+  Uri _uri(String path, [Map<String, String>? query]) => Uri.parse('$baseUrl$path').replace(queryParameters: query);
 
   String photoImageUrl(String photoId) => '$baseUrl/api/photos/$photoId/image';
 
@@ -44,11 +43,24 @@ class ApiClient {
     return data.map((e) => Building.fromJson(e)).toList();
   }
 
-  Future<Building> addBuilding(String name) async => Building.fromJson(
-      await _send(http.post(_uri('/api/buildings'), headers: _json, body: jsonEncode({'name': name}))));
+  Future<Building> building(String id) async => Building.fromJson(await _send(http.get(_uri('/api/buildings/$id'))));
 
-  Future<void> renameBuilding(String id, String name) =>
-      _send(http.patch(_uri('/api/buildings/$id'), headers: _json, body: jsonEncode({'name': name})));
+  Future<Building> addBuilding(String name, String location) async => Building.fromJson(
+    await _send(
+      http.post(_uri('/api/buildings'), headers: _json, body: jsonEncode({'name': name, 'location': location})),
+    ),
+  );
+
+  Future<Building> updateBuilding(String id, {String? name, String? location, String? layoutPhotoId}) async =>
+      Building.fromJson(
+        await _send(
+          http.patch(
+            _uri('/api/buildings/$id'),
+            headers: _json,
+            body: jsonEncode({'name': ?name, 'location': ?location, 'layout_photo_id': ?layoutPhotoId}),
+          ),
+        ),
+      );
 
   Future<void> deleteBuilding(String id) => _send(http.delete(_uri('/api/buildings/$id')));
 
@@ -68,35 +80,41 @@ class ApiClient {
 
   Future<void> deletePhoto(String id) => _send(http.delete(_uri('/api/photos/$id')));
 
-  Future<Photo> saveSlots(String photoId, List<Slot> slots) async => Photo.fromJson(await _send(http.put(
-      _uri('/api/photos/$photoId/slots'),
-      headers: _json,
-      body: jsonEncode({'slots': slots.map((s) => s.toJson()).toList()}))));
+  Future<Photo> saveSlots(String photoId, List<Slot> slots) async => Photo.fromJson(
+    await _send(
+      http.put(
+        _uri('/api/photos/$photoId/slots'),
+        headers: _json,
+        body: jsonEncode({'slots': slots.map((s) => s.toJson()).toList()}),
+      ),
+    ),
+  );
 
-  Future<DetectionResult> detect(String photoId, {String? model}) async =>
-      DetectionResult.fromJson(await _send(http.post(_uri('/api/photos/$photoId/detect'),
-          headers: _json, body: jsonEncode({'model': ?model}))));
+  Future<DetectionResult> detect(String photoId, {String? model}) async => DetectionResult.fromJson(
+    await _send(http.post(_uri('/api/photos/$photoId/detect'), headers: _json, body: jsonEncode({'model': ?model}))),
+  );
 
   // Model & pengaturan
   Future<Settings> settings() async => Settings.fromJson(await _send(http.get(_uri('/api/settings'))));
 
   Future<Settings> updateSettings({String? modelDir, String? model, double? conf, double? overlap}) async =>
-      Settings.fromJson(await _send(http.put(_uri('/api/settings'),
-          headers: _json,
-          body: jsonEncode({
-            'model_dir': ?modelDir,
-            'model': ?model,
-            'conf': ?conf,
-            'overlap': ?overlap,
-          }))));
+      Settings.fromJson(
+        await _send(
+          http.put(
+            _uri('/api/settings'),
+            headers: _json,
+            body: jsonEncode({'model_dir': ?modelDir, 'model': ?model, 'conf': ?conf, 'overlap': ?overlap}),
+          ),
+        ),
+      );
 
   Future<List<ModelFile>> models() async {
     final data = await _send(http.get(_uri('/api/models')));
     return (data['models'] as List).map((e) => ModelFile.fromJson(e)).toList();
   }
 
-  Future<BrowseResult> browse([String? path]) async => BrowseResult.fromJson(
-      await _send(http.get(_uri('/api/browse', path == null ? null : {'path': path}))));
+  Future<BrowseResult> browse([String? path]) async =>
+      BrowseResult.fromJson(await _send(http.get(_uri('/api/browse', path == null ? null : {'path': path}))));
 }
 
 class ApiException implements Exception {
@@ -107,13 +125,39 @@ class ApiException implements Exception {
 }
 
 class Building {
-  Building({required this.id, required this.name, required this.photoCount});
+  Building({
+    required this.id,
+    required this.name,
+    required this.location,
+    required this.photoCount,
+    required this.lotCount,
+    required this.layoutPhotoId,
+  });
   final String id;
   final String name;
+  final String location;
   final int photoCount;
+  final int lotCount; // jumlah slot di foto acuan
+  final String? layoutPhotoId;
 
-  factory Building.fromJson(Map<String, dynamic> j) =>
-      Building(id: j['id'], name: j['name'], photoCount: j['photo_count'] ?? 0);
+  /// Kode singkat gedung untuk kotak huruf dan nama lot: "Gedung T" -> "T", "Perpustakaan" -> "P".
+  String get code {
+    final words = name.trim().split(RegExp(r'\s+'));
+    if (words.length > 1 && words.first.toLowerCase() == 'gedung') {
+      final w = words[1].toUpperCase();
+      return w.length > 3 ? w.substring(0, 3) : w;
+    }
+    return words.first.isEmpty ? '?' : words.first[0].toUpperCase();
+  }
+
+  factory Building.fromJson(Map<String, dynamic> j) => Building(
+    id: j['id'],
+    name: j['name'],
+    location: j['location'] ?? '',
+    photoCount: j['photo_count'] ?? 0,
+    lotCount: j['lot_count'] ?? 0,
+    layoutPhotoId: j['layout_photo_id'],
+  );
 }
 
 class Slot {
@@ -127,9 +171,9 @@ class Slot {
   }
 
   Map<String, dynamic> toJson() => {
-        'label': label,
-        'bbox': [rect.left, rect.top, rect.right, rect.bottom],
-      };
+    'label': label,
+    'bbox': [rect.left, rect.top, rect.right, rect.bottom],
+  };
 
   Slot copy() => Slot(label: label, rect: rect);
 }
@@ -153,49 +197,67 @@ class Photo {
   Size get size => Size(width.toDouble(), height.toDouble());
 
   factory Photo.fromJson(Map<String, dynamic> j) => Photo(
-        id: j['id'],
-        originalName: j['original_name'] ?? '',
-        width: j['width'],
-        height: j['height'],
-        slots: (j['slots'] as List).map((e) => Slot.fromJson(e)).toList(),
-        lastResult: j['last_result'] == null ? null : DetectionResult.fromJson(j['last_result']),
-      );
+    id: j['id'],
+    originalName: j['original_name'] ?? '',
+    width: j['width'],
+    height: j['height'],
+    slots: (j['slots'] as List).map((e) => Slot.fromJson(e)).toList(),
+    lastResult: j['last_result'] == null ? null : DetectionResult.fromJson(j['last_result']),
+  );
 }
 
 class Summary {
   Summary(this.total, this.empty, this.occupied, this.anomaly);
   final int total, empty, occupied, anomaly;
-  factory Summary.fromJson(Map<String, dynamic> j) =>
-      Summary(j['total'], j['empty'], j['occupied'], j['anomaly']);
+  factory Summary.fromJson(Map<String, dynamic> j) => Summary(j['total'], j['empty'], j['occupied'], j['anomaly']);
+}
+
+class SlotResult {
+  SlotResult({required this.label, required this.rect, required this.status});
+  final String label;
+  final Rect rect;
+  final String status; // empty / occupied / anomaly
 }
 
 class DetectionResult {
   DetectionResult({
     required this.model,
     required this.summary,
-    required this.statuses,
+    required this.slots,
     required this.cars,
     required this.elapsedMs,
     required this.warning,
+    required this.layoutSource,
+    required this.layoutWarning,
   });
   final String model;
   final Summary summary;
-  final List<String> statuses; // per slot, urutan sama dengan slot
+  final List<SlotResult> slots;
   final List<Rect> cars;
   final int elapsedMs;
-  final String? warning;
+  final String? warning; // mis. model tanpa kelas mobil
+  final String layoutSource; // photo / building / none
+  final String? layoutWarning;
+
+  List<String> get statuses => slots.map((s) => s.status).toList();
+
+  static Rect _rect(List bbox) {
+    final b = bbox.map((v) => (v as num).toDouble()).toList();
+    return Rect.fromLTRB(b[0], b[1], b[2], b[3]);
+  }
 
   factory DetectionResult.fromJson(Map<String, dynamic> j) => DetectionResult(
-        model: j['model'],
-        summary: Summary.fromJson(j['summary']),
-        statuses: (j['slots'] as List).map((s) => s['status'] as String).toList(),
-        cars: (j['cars'] as List).map((c) {
-          final b = (c['bbox'] as List).map((v) => (v as num).toDouble()).toList();
-          return Rect.fromLTRB(b[0], b[1], b[2], b[3]);
-        }).toList(),
-        elapsedMs: j['elapsed_ms'] ?? 0,
-        warning: j['warning'],
-      );
+    model: j['model'],
+    summary: Summary.fromJson(j['summary']),
+    slots: (j['slots'] as List)
+        .map((s) => SlotResult(label: s['label'], rect: _rect(s['bbox']), status: s['status']))
+        .toList(),
+    cars: (j['cars'] as List).map((c) => _rect(c['bbox'])).toList(),
+    elapsedMs: j['elapsed_ms'] ?? 0,
+    warning: j['warning'],
+    layoutSource: j['layout_source'] ?? 'photo',
+    layoutWarning: j['layout_warning'],
+  );
 }
 
 class Settings {
@@ -206,11 +268,11 @@ class Settings {
   final double overlap;
 
   factory Settings.fromJson(Map<String, dynamic> j) => Settings(
-        modelDir: j['model_dir'],
-        model: j['model'],
-        conf: (j['conf'] as num).toDouble(),
-        overlap: (j['overlap'] as num).toDouble(),
-      );
+    modelDir: j['model_dir'],
+    model: j['model'],
+    conf: (j['conf'] as num).toDouble(),
+    overlap: (j['overlap'] as num).toDouble(),
+  );
 }
 
 class ModelFile {
@@ -228,9 +290,9 @@ class BrowseResult {
   final List<ModelFile> models;
 
   factory BrowseResult.fromJson(Map<String, dynamic> j) => BrowseResult(
-        path: j['path'],
-        parent: j['parent'],
-        dirs: List<String>.from(j['dirs']),
-        models: (j['models'] as List).map((e) => ModelFile.fromJson(e)).toList(),
-      );
+    path: j['path'],
+    parent: j['parent'],
+    dirs: List<String>.from(j['dirs']),
+    models: (j['models'] as List).map((e) => ModelFile.fromJson(e)).toList(),
+  );
 }

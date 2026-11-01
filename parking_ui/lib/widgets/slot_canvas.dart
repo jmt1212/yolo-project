@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
@@ -23,9 +25,36 @@ class SlotCanvas extends StatefulWidget {
     required this.onChange,
     this.statuses,
     this.cars = const [],
+    this.imageBytes,
+    this.readOnly = false,
+    this.mono = false,
   });
 
+  /// Tampilan hasil untuk pengunjung: tanpa gestur, warna monokrom sesuai wireframe.
+  const SlotCanvas.result({
+    super.key,
+    required this.imageSize,
+    required this.slots,
+    required List<String> this.statuses,
+    this.imageUrl = '',
+    this.imageBytes,
+  }) : selected = null,
+       mode = EditMode.select,
+       onSelect = _noSelect,
+       onAdd = _noAdd,
+       onChange = _noChange,
+       cars = const [],
+       readOnly = true,
+       mono = true;
+
+  static void _noSelect(int? _) {}
+  static void _noAdd(Rect _) {}
+  static void _noChange(int _, Rect _) {}
+
   final String imageUrl;
+  final Uint8List? imageBytes;
+  final bool readOnly;
+  final bool mono;
   final Size imageSize;
   final List<Slot> slots;
   final int? selected;
@@ -55,9 +84,9 @@ class _SlotCanvasState extends State<SlotCanvas> {
   int? _dragIndex;
 
   Offset _toImage(Offset local) => Offset(
-        (local.dx / _scale).clamp(0, widget.imageSize.width),
-        (local.dy / _scale).clamp(0, widget.imageSize.height),
-      );
+    (local.dx / _scale).clamp(0, widget.imageSize.width),
+    (local.dy / _scale).clamp(0, widget.imageSize.height),
+  );
 
   int? _slotAt(Offset p) {
     for (var i = widget.slots.length - 1; i >= 0; i--) {
@@ -138,48 +167,59 @@ class _SlotCanvasState extends State<SlotCanvas> {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(builder: (context, constraints) {
-      final img = widget.imageSize;
-      _scale = [constraints.maxWidth / img.width, constraints.maxHeight / img.height].reduce((a, b) => a < b ? a : b);
-      final display = Size(img.width * _scale, img.height * _scale);
-      return Center(
-        child: MouseRegion(
-          cursor: widget.mode == EditMode.draw ? SystemMouseCursors.precise : SystemMouseCursors.basic,
-          child: GestureDetector(
-            // Posisi awal geser = titik mouse ditekan, bukan titik saat geser dikenali,
-            // supaya sudut slot tepat kena dan kotak mengikuti kursor.
-            dragStartBehavior: DragStartBehavior.down,
-            onTapUp: widget.mode == EditMode.select ? (d) => widget.onSelect(_slotAt(_toImage(d.localPosition))) : null,
-            onPanStart: _onPanStart,
-            onPanUpdate: _onPanUpdate,
-            onPanEnd: _onPanEnd,
-            child: SizedBox.fromSize(
-              size: display,
-              child: Stack(fit: StackFit.expand, children: [
-                Image.network(
-                  widget.imageUrl,
-                  fit: BoxFit.fill,
-                  loadingBuilder: (_, child, progress) =>
-                      progress == null ? child : const Center(child: CircularProgressIndicator()),
-                  errorBuilder: (_, _, _) => const Center(child: Text('Foto gagal dimuat')),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final img = widget.imageSize;
+        _scale = [constraints.maxWidth / img.width, constraints.maxHeight / img.height].reduce((a, b) => a < b ? a : b);
+        final display = Size(img.width * _scale, img.height * _scale);
+        return Center(
+          child: MouseRegion(
+            cursor: widget.mode == EditMode.draw ? SystemMouseCursors.precise : SystemMouseCursors.basic,
+            child: GestureDetector(
+              // Posisi awal geser = titik mouse ditekan, bukan titik saat geser dikenali,
+              // supaya sudut slot tepat kena dan kotak mengikuti kursor.
+              dragStartBehavior: DragStartBehavior.down,
+              onTapUp: !widget.readOnly && widget.mode == EditMode.select
+                  ? (d) => widget.onSelect(_slotAt(_toImage(d.localPosition)))
+                  : null,
+              onPanStart: widget.readOnly ? null : _onPanStart,
+              onPanUpdate: widget.readOnly ? null : _onPanUpdate,
+              onPanEnd: widget.readOnly ? null : _onPanEnd,
+              child: SizedBox.fromSize(
+                size: display,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (widget.imageBytes != null)
+                      Image.memory(widget.imageBytes!, fit: BoxFit.fill)
+                    else
+                      Image.network(
+                        widget.imageUrl,
+                        fit: BoxFit.fill,
+                        loadingBuilder: (_, child, progress) =>
+                            progress == null ? child : const Center(child: CircularProgressIndicator()),
+                        errorBuilder: (_, _, _) => const Center(child: Text('Foto gagal dimuat')),
+                      ),
+                    CustomPaint(
+                      painter: _SlotPainter(
+                        scale: _scale,
+                        slots: widget.slots,
+                        selected: widget.selected,
+                        statuses: widget.statuses,
+                        cars: widget.cars,
+                        drawing: _drag == _Drag.draw ? Rect.fromPoints(_start, _current) : null,
+                        handleRadius: _handleRadius,
+                        mono: widget.mono,
+                      ),
+                    ),
+                  ],
                 ),
-                CustomPaint(
-                  painter: _SlotPainter(
-                    scale: _scale,
-                    slots: widget.slots,
-                    selected: widget.selected,
-                    statuses: widget.statuses,
-                    cars: widget.cars,
-                    drawing: _drag == _Drag.draw ? Rect.fromPoints(_start, _current) : null,
-                    handleRadius: _handleRadius,
-                  ),
-                ),
-              ]),
+              ),
             ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
   }
 }
 
@@ -192,8 +232,10 @@ class _SlotPainter extends CustomPainter {
     required this.cars,
     required this.drawing,
     required this.handleRadius,
+    this.mono = false,
   });
 
+  final bool mono;
   final double scale;
   final List<Slot> slots;
   final int? selected;
@@ -209,6 +251,10 @@ class _SlotPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (mono) {
+      _paintMono(canvas);
+      return;
+    }
     final carPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5
@@ -235,10 +281,13 @@ class _SlotPainter extends CustomPainter {
         for (final c in [r.topLeft, r.topRight, r.bottomLeft, r.bottomRight]) {
           final h = Rect.fromCenter(center: c, width: handleRadius, height: handleRadius);
           canvas.drawRect(h, Paint()..color = Colors.white);
-          canvas.drawRect(h, Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.5
-            ..color = color);
+          canvas.drawRect(
+            h,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1.5
+              ..color = color,
+          );
         }
       }
     }
@@ -247,16 +296,49 @@ class _SlotPainter extends CustomPainter {
     if (d != null) {
       final r = _toScreen(d);
       canvas.drawRect(r, Paint()..color = _neutral.withValues(alpha: 0.2));
-      canvas.drawRect(r, Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
-        ..color = _neutral);
+      canvas.drawRect(
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2
+          ..color = _neutral,
+      );
     }
   }
 
-  void _label(Canvas canvas, String text, Offset at, Color color) {
+  /// Gaya wireframe: terisi = gelap, kosong = putih, anomali = putih dengan tanda "!".
+  void _paintMono(Canvas canvas) {
+    const ink = Color(0xFF262626);
+    for (var i = 0; i < slots.length; i++) {
+      final status = statuses != null && i < statuses!.length ? statuses![i] : 'empty';
+      final r = _toScreen(slots[i].rect);
+      final occupied = status == 'occupied';
+      canvas.drawRect(r, Paint()..color = (occupied ? ink : Colors.white).withValues(alpha: occupied ? 0.55 : 0.3));
+      canvas.drawRect(
+        r.inflate(1),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1
+          ..color = occupied ? Colors.white : ink,
+      );
+      canvas.drawRect(
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2
+          ..color = occupied ? ink : Colors.white,
+      );
+      final text = status == 'anomaly' ? '! ${slots[i].label}' : slots[i].label;
+      _label(canvas, text, r.topLeft, occupied ? ink : Colors.white, textColor: occupied ? Colors.white : ink);
+    }
+  }
+
+  void _label(Canvas canvas, String text, Offset at, Color color, {Color textColor = Colors.white}) {
     final tp = TextPainter(
-      text: TextSpan(text: text, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
+      text: TextSpan(
+        text: text,
+        style: TextStyle(color: textColor, fontSize: 11, fontWeight: FontWeight.w600),
+      ),
       textDirection: TextDirection.ltr,
     )..layout();
     final bg = Rect.fromLTWH(at.dx, at.dy - tp.height - 2, tp.width + 6, tp.height + 2);
