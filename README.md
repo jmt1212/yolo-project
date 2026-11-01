@@ -62,6 +62,26 @@ Pemasangan ini mengunduh PyTorch dan Ultralytics (sekitar 1 GB), jadi bisa memak
 
 ## 4. Jalankan aplikasi
 
+### Cara cepat: satu perintah (Windows)
+
+Dari folder proyek, jalankan:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start.ps1
+```
+
+Skrip ini menjalankan backend dan aplikasi web di satu jendela, menunggu sampai backend siap, lalu
+membuka http://localhost:5600 di browser. Tekan **Ctrl + C** untuk menghentikan keduanya.
+
+Pilihan tambahan:
+
+- `-Build`: bangun ulang aplikasi web dulu (butuh Flutter). Pakai ini setelah mengubah kode di `parking_ui\lib`.
+- `-NoBrowser`: jangan buka browser secara otomatis.
+
+Saat pertama kali dijalankan, skrip juga membangun aplikasi web jika belum ada.
+
+### Cara manual: dua terminal
+
 Buka **dua terminal**, keduanya di folder proyek.
 
 ### Terminal 1 — backend
@@ -115,6 +135,7 @@ yolo-project/
 │   └── data/           Data gedung, foto, dan lot (dibuat otomatis, tidak masuk git)
 ├── parking_ui/         Aplikasi Flutter (lihat parking_ui/README.md untuk detail kode)
 ├── trial1/             Model YOLO .pt, foto contoh, dan prototipe awal (app.py + index.html)
+├── start.ps1           Menjalankan backend dan aplikasi web sekaligus (Windows)
 └── README.md           Dokumen ini
 ```
 
