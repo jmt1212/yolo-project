@@ -34,6 +34,14 @@ class _DetectFlowPageState extends State<DetectFlowPage> {
   String? _formatError;
   bool _dragging = false;
 
+  // Lot pada foto ini, bisa diatur manual (awalnya dari foto acuan gedung).
+  Size? _imageSize;
+  Layout? _layout;
+  List<Slot> _slots = [];
+  int? _selected;
+  EditMode _mode = EditMode.select;
+  final _labelController = TextEditingController();
+
   Photo? _uploaded; // diisi setelah foto diterima server
   bool _uploadDone = false;
   DetectionResult? _result;
@@ -43,9 +51,15 @@ class _DetectFlowPageState extends State<DetectFlowPage> {
 
   Building get b => widget.building;
 
+  @override
+  void dispose() {
+    _labelController.dispose();
+    super.dispose();
+  }
+
   // ---------------------------------------------------------------- aksi
 
-  void _accept(String name, Uint8List bytes) {
+  Future<void> _accept(String name, Uint8List bytes) async {
     final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
     if (!_allowedExt.contains(ext)) {
       setState(() {
@@ -60,9 +74,76 @@ class _DetectFlowPageState extends State<DetectFlowPage> {
       _formatError = null;
       _uploaded = null;
       _result = null;
+      _imageSize = null;
+      _slots = [];
+      _select(null);
       _stage = _Stage.ready;
     });
+    // Ukuran asli foto + lot dari foto acuan, untuk diisi awal di editor lot.
+    final Size size;
+    try {
+      final image = await decodeImageFromList(bytes);
+      size = Size(image.width.toDouble(), image.height.toDouble());
+      image.dispose();
+    } catch (_) {
+      if (mounted) setState(() => _formatError = 'Foto tidak dapat dibaca. Coba foto lain.');
+      if (mounted) setState(() => _stage = _Stage.pick);
+      return;
+    }
+    Layout? layout;
+    try {
+      layout = await api.layout(b.id);
+    } on ApiException {
+      layout = null;
+    }
+    if (!mounted || _bytes != bytes) return;
+    setState(() {
+      _imageSize = size;
+      _layout = layout;
+      _slots = layout?.scaledTo(size) ?? [];
+    });
   }
+
+  void _select(int? i) {
+    _selected = i;
+    _labelController.text = i == null ? '' : _slots[i].label;
+  }
+
+  void _lotsEdited() => _result = null;
+
+  void _addSlot(Rect rect) => setState(() {
+    _slots.add(Slot(label: nextSlotLabel(_slots, b.code), rect: rect));
+    _select(_slots.length - 1);
+    _lotsEdited();
+  });
+
+  void _changeSlot(int i, Rect rect) => setState(() {
+    _slots[i].rect = rect;
+    _lotsEdited();
+  });
+
+  void _deleteSelected() {
+    final i = _selected;
+    if (i == null) return;
+    setState(() {
+      _slots.removeAt(i);
+      _select(null);
+      _lotsEdited();
+    });
+  }
+
+  void _resetLots() => setState(() {
+    _slots = _layout?.scaledTo(_imageSize!) ?? [];
+    _select(null);
+    _lotsEdited();
+  });
+
+  /// Dari halaman hasil: kembali ke editor lot dengan foto yang sama.
+  void _editLots() => setState(() {
+    _select(null);
+    _mode = EditMode.select;
+    _stage = _Stage.ready;
+  });
 
   Future<void> _pickFile() async {
     final picked = await FilePicker.pickFiles(
@@ -88,6 +169,9 @@ class _DetectFlowPageState extends State<DetectFlowPage> {
     _uploaded = null;
     _result = null;
     _formatError = null;
+    _imageSize = null;
+    _slots = [];
+    _select(null);
     _stage = _Stage.pick;
   });
 
@@ -103,10 +187,12 @@ class _DetectFlowPageState extends State<DetectFlowPage> {
       _uploaded ??= await api.uploadPhoto(b.id, _fileName, bytes);
       if (run != _run) return;
       setState(() => _uploadDone = true);
-      final result = await api.detect(_uploaded!.id);
+      final result = await api.detectWithSlots(_uploaded!.id, _slots);
       if (run != _run || !mounted) return;
       setState(() {
         _result = result;
+        // Pakai lot versi server (sudah dirapikan) supaya urutannya sama dengan hasil.
+        _slots = [for (final s in result.slots) Slot(label: s.label, rect: s.rect)];
         if (result.warning != null) {
           _fail(result.warning!, connection: false);
         } else {
@@ -141,7 +227,10 @@ class _DetectFlowPageState extends State<DetectFlowPage> {
         'Unggah foto parkir',
         'Pilih satu foto area parkir untuk mendeteksi lot yang tersedia di ${b.name}.',
       ),
-      _Stage.ready => ('Foto siap untuk dideteksi', 'Periksa foto dan gedung pilihan Anda sebelum memulai deteksi.'),
+      _Stage.ready => (
+        'Foto siap untuk dideteksi',
+        'Periksa foto dan posisi lot sebelum memulai deteksi. Geser atau ubah ukuran kotak lot bila perlu.',
+      ),
       _Stage.processing => (
         'Sedang mendeteksi lot parkir',
         'Foto Anda sedang dianalisis. Hasil akan ditampilkan setelah proses selesai.',
@@ -245,7 +334,7 @@ class _DetectFlowPageState extends State<DetectFlowPage> {
       main: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _PhotoBox(bytes: _bytes!, height: 300),
+          _lotEditor(),
           const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -269,19 +358,131 @@ class _DetectFlowPageState extends State<DetectFlowPage> {
             ],
           ),
           const SizedBox(height: 20),
-          Align(
-            alignment: Alignment.centerRight,
-            child: FilledButton(
-              onPressed: _detect,
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [Text('Deteksi parkir'), SizedBox(width: 8), Icon(Icons.arrow_forward, size: 16)],
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _imageSize != null && _slots.isEmpty ? 'Tambahkan minimal satu lot untuk memulai deteksi.' : '',
+                  style: const TextStyle(fontSize: 12, color: Pk.muted),
+                ),
               ),
-            ),
+              FilledButton(
+                onPressed: _imageSize == null || _slots.isEmpty ? null : _detect,
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [Text('Deteksi parkir'), SizedBox(width: 8), Icon(Icons.arrow_forward, size: 16)],
+                ),
+              ),
+            ],
           ),
         ],
       ),
       side: TipsPanel(buildingName: b.name),
+    );
+  }
+
+  /// Foto dengan kotak lot yang bisa digambar, dipindah, diubah ukurannya, diganti nama, dan dihapus.
+  Widget _lotEditor() {
+    final size = _imageSize;
+    final selected = _selected;
+    final hint = _mode == EditMode.draw
+        ? 'Tarik di foto untuk menambah lot baru.'
+        : 'Klik lot untuk memilih. Geser untuk memindah, tarik sudut untuk mengubah ukuran.';
+    final hasLayout = _layout?.size != null;
+    return Panel(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SegmentedButton<EditMode>(
+                showSelectedIcon: false,
+                style: SegmentedButton.styleFrom(
+                  shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(4))),
+                  selectedBackgroundColor: Pk.dark,
+                  selectedForegroundColor: Colors.white,
+                  side: const BorderSide(color: Pk.line),
+                  visualDensity: VisualDensity.compact,
+                ),
+                segments: const [
+                  ButtonSegment(
+                    value: EditMode.select,
+                    icon: Icon(Icons.pan_tool_alt_outlined, size: 16),
+                    label: Text('Pilih / ubah', style: TextStyle(fontSize: 12)),
+                  ),
+                  ButtonSegment(
+                    value: EditMode.draw,
+                    icon: Icon(Icons.crop_square, size: 16),
+                    label: Text('Gambar lot', style: TextStyle(fontSize: 12)),
+                  ),
+                ],
+                selected: {_mode},
+                onSelectionChanged: (v) => setState(() => _mode = v.first),
+              ),
+              Text('${_slots.length} lot', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+              if (hasLayout) LinkText('Kembalikan ke tata letak ${b.name}', onTap: _resetLots),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(hint, style: const TextStyle(fontSize: 11, color: Pk.muted)),
+          const SizedBox(height: 10),
+          Container(
+            height: 340,
+            color: Pk.fill,
+            padding: const EdgeInsets.all(10),
+            child: size == null
+                ? const Center(child: CircularProgressIndicator())
+                : SlotCanvas(
+                    imageUrl: '',
+                    imageBytes: _bytes,
+                    imageSize: size,
+                    slots: _slots,
+                    selected: selected,
+                    mode: _mode,
+                    onSelect: (i) => setState(() => _select(i)),
+                    onAdd: _addSlot,
+                    onChange: _changeSlot,
+                  ),
+          ),
+          if (size != null && !hasLayout) ...[
+            const SizedBox(height: 10),
+            _InfoBox(
+              text:
+                  '${b.name} belum memiliki tata letak lot. Pilih mode "Gambar lot", lalu tarik kotak '
+                  'di setiap lot parkir pada foto.',
+            ),
+          ] else if (size != null && _layout!.aspectDiffers(size)) ...[
+            const SizedBox(height: 10),
+            const _InfoBox(
+              text:
+                  'Ukuran foto berbeda dengan foto acuan gedung, jadi posisi lot mungkin bergeser. '
+                  'Periksa dan sesuaikan kotak lot sebelum deteksi.',
+            ),
+          ],
+          if (selected != null && selected < _slots.length) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                SizedBox(
+                  width: 160,
+                  child: TextField(
+                    controller: _labelController,
+                    style: const TextStyle(fontSize: 13),
+                    decoration: const InputDecoration(labelText: 'Nama lot', isDense: true),
+                    onChanged: (v) => setState(() => _slots[selected].label = v),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                LinkText('Hapus lot', onTap: _deleteSelected),
+              ],
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -353,12 +554,12 @@ class _DetectFlowPageState extends State<DetectFlowPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Row(
+            Row(
               children: [
-                Expanded(
+                const Expanded(
                   child: Text('Posisi lot terdeteksi', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                 ),
-                Text('BERDASARKAN FOTO ANDA', style: TextStyle(fontSize: 10, letterSpacing: 1, color: Pk.muted)),
+                LinkText('Ubah posisi lot', onTap: _editLots),
               ],
             ),
             const SizedBox(height: 14),
@@ -380,9 +581,9 @@ class _DetectFlowPageState extends State<DetectFlowPage> {
               spacing: 16,
               runSpacing: 6,
               children: [
-                const _Legend(fill: Colors.white, label: 'Lot kosong'),
-                const _Legend(fill: Pk.dark, label: 'Lot terisi'),
-                if (r.summary.anomaly > 0) const _Legend(fill: Pk.fill, label: 'Anomali (lebih dari satu kendaraan)'),
+                _Legend(fill: statusColors['empty']!, label: 'Lot kosong'),
+                _Legend(fill: statusColors['occupied']!, label: 'Lot terisi'),
+                _Legend(fill: statusColors['anomaly']!, label: 'Anomali (lebih dari satu kendaraan)'),
               ],
             ),
             const SizedBox(height: 10),
@@ -403,16 +604,29 @@ class _DetectFlowPageState extends State<DetectFlowPage> {
               children: [
                 _Stat(value: r.summary.total, label: 'Total lot'),
                 const SizedBox(width: 8),
-                _Stat(value: r.summary.empty, label: 'Kosong'),
+                _Stat(value: r.summary.empty, label: 'Kosong', color: statusColors['empty']),
                 const SizedBox(width: 8),
-                _Stat(value: r.summary.occupied, label: 'Terisi'),
+                _Stat(value: r.summary.occupied, label: 'Terisi', color: statusColors['occupied']),
               ],
             ),
             if (r.summary.anomaly > 0) ...[
               const SizedBox(height: 8),
-              Text(
-                '${r.summary.anomaly} lot anomali: terdeteksi lebih dari satu kendaraan.',
-                style: const TextStyle(fontSize: 11, color: Pk.muted),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    margin: const EdgeInsets.only(top: 2, right: 6),
+                    color: statusColors['anomaly'],
+                  ),
+                  Expanded(
+                    child: Text(
+                      '${r.summary.anomaly} lot anomali: terdeteksi lebih dari satu kendaraan.',
+                      style: const TextStyle(fontSize: 11, color: Pk.muted),
+                    ),
+                  ),
+                ],
               ),
             ],
             const SizedBox(height: 16),
@@ -430,6 +644,8 @@ class _DetectFlowPageState extends State<DetectFlowPage> {
             if (r.layoutWarning != null) ...[const SizedBox(height: 10), _InfoBox(text: r.layoutWarning!)],
             const SizedBox(height: 16),
             FilledButton(onPressed: _resetPhoto, child: const Text('Unggah foto baru')),
+            const SizedBox(height: 8),
+            OutlinedButton(onPressed: _editLots, child: const Text('Ubah posisi lot')),
           ],
         ),
       ),
@@ -588,9 +804,10 @@ class _PhotoBox extends StatelessWidget {
 }
 
 class _Stat extends StatelessWidget {
-  const _Stat({required this.value, required this.label});
+  const _Stat({required this.value, required this.label, this.color});
   final int value;
   final String label;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
@@ -601,7 +818,10 @@ class _Stat extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('$value', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+            Text(
+              '$value',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: color),
+            ),
             Text(label, style: const TextStyle(fontSize: 10, color: Pk.muted)),
           ],
         ),
@@ -617,16 +837,11 @@ class _LotTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final occupied = slot.status == 'occupied';
-    final anomaly = slot.status == 'anomaly';
-    final fg = occupied ? Colors.white : Pk.ink;
+    final fg = statusTextColor(slot.status);
     return Container(
       width: 84,
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-      decoration: BoxDecoration(
-        color: occupied ? Pk.dark : (anomaly ? Pk.fill : Colors.white),
-        border: Border.all(color: Pk.dark, width: occupied ? 1 : 1.5),
-      ),
+      decoration: BoxDecoration(color: statusColors[slot.status] ?? Pk.fill),
       child: Column(
         children: [
           Text(
@@ -653,14 +868,7 @@ class _Legend extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 12,
-          height: 12,
-          decoration: BoxDecoration(
-            color: fill,
-            border: Border.all(color: Pk.dark),
-          ),
-        ),
+        Container(width: 12, height: 12, color: fill),
         const SizedBox(width: 6),
         Text(label, style: const TextStyle(fontSize: 11, color: Pk.muted)),
       ],

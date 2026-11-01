@@ -90,6 +90,19 @@ class ApiClient {
     ),
   );
 
+  Future<Layout> layout(String buildingId) async =>
+      Layout.fromJson(await _send(http.get(_uri('/api/buildings/$buildingId/layout'))));
+
+  Future<DetectionResult> detectWithSlots(String photoId, List<Slot> slots) async => DetectionResult.fromJson(
+    await _send(
+      http.post(
+        _uri('/api/photos/$photoId/detect'),
+        headers: _json,
+        body: jsonEncode({'slots': slots.map((s) => s.toJson()).toList()}),
+      ),
+    ),
+  );
+
   Future<DetectionResult> detect(String photoId, {String? model}) async => DetectionResult.fromJson(
     await _send(http.post(_uri('/api/photos/$photoId/detect'), headers: _json, body: jsonEncode({'model': ?model}))),
   );
@@ -204,6 +217,40 @@ class Photo {
     slots: (j['slots'] as List).map((e) => Slot.fromJson(e)).toList(),
     lastResult: j['last_result'] == null ? null : DetectionResult.fromJson(j['last_result']),
   );
+}
+
+/// Lot dari foto acuan gedung beserta ukuran foto acuannya.
+class Layout {
+  Layout({required this.size, required this.slots});
+  final Size? size; // null jika gedung belum punya foto acuan
+  final List<Slot> slots;
+
+  factory Layout.fromJson(Map<String, dynamic> j) => Layout(
+    size: j['width'] == null ? null : Size((j['width'] as num).toDouble(), (j['height'] as num).toDouble()),
+    slots: (j['slots'] as List).map((e) => Slot.fromJson(e)).toList(),
+  );
+
+  /// Lot yang diskalakan ke ukuran foto lain (kamera dan sudut dianggap sama).
+  List<Slot> scaledTo(Size target) {
+    final src = size;
+    if (src == null) return [];
+    final sx = target.width / src.width, sy = target.height / src.height;
+    return [
+      for (final s in slots)
+        Slot(
+          label: s.label,
+          rect: Rect.fromLTRB(s.rect.left * sx, s.rect.top * sy, s.rect.right * sx, s.rect.bottom * sy),
+        ),
+    ];
+  }
+
+  /// True jika rasio foto berbeda dari foto acuan (posisi lot perlu diperiksa).
+  bool aspectDiffers(Size target) {
+    final src = size;
+    if (src == null) return false;
+    final sx = target.width / src.width, sy = target.height / src.height;
+    return (sx - sy).abs() / (sx > sy ? sx : sy) > 0.03;
+  }
 }
 
 class Summary {

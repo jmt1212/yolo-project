@@ -77,15 +77,6 @@ class _PhotoPageState extends State<PhotoPage> {
     _labelController.text = i == null ? '' : _slots[i].label;
   }
 
-  String _nextLabel() {
-    var max = 0;
-    for (final s in _slots) {
-      final m = RegExp(r'(\d+)\s*$').firstMatch(s.label);
-      if (m != null) max = [max, int.parse(m.group(1)!)].reduce((a, b) => a > b ? a : b);
-    }
-    return '${widget.labelPrefix}-${(max + 1).toString().padLeft(2, '0')}';
-  }
-
   void _geometryEdited() {
     _dirty = true;
     _geometryChanged = true;
@@ -93,7 +84,7 @@ class _PhotoPageState extends State<PhotoPage> {
   }
 
   void _addSlot(Rect rect) => setState(() {
-    _slots.add(Slot(label: _nextLabel(), rect: rect));
+    _slots.add(Slot(label: nextSlotLabel(_slots, widget.labelPrefix), rect: rect));
     _select(_slots.length - 1);
     _geometryEdited();
   });

@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:parking_ui/api.dart';
+import 'package:parking_ui/common.dart';
 import 'package:parking_ui/main.dart';
 
 void main() {
@@ -57,6 +58,26 @@ void main() {
     expect(b('Perpustakaan').code, 'P');
     expect(b('Gedung Baru').code, 'BAR');
     expect(b('Gedung Q').location, '');
+  });
+
+  test('Layout menskalakan lot ke ukuran foto lain dan mendeteksi rasio berbeda', () {
+    final layout = Layout.fromJson({
+      'width': 960,
+      'height': 318,
+      'slots': [
+        {'id': 1, 'label': 'Q-01', 'bbox': [97, 120, 189, 166]},
+      ],
+    });
+    expect(layout.scaledTo(const Size(1920, 636)).single.rect, const Rect.fromLTRB(194, 240, 378, 332));
+    expect(layout.aspectDiffers(const Size(1920, 636)), isFalse);
+    expect(layout.aspectDiffers(const Size(531, 376)), isTrue);
+    expect(Layout.fromJson({'width': null, 'height': null, 'slots': []}).scaledTo(const Size(10, 10)), isEmpty);
+  });
+
+  test('nextSlotLabel melanjutkan nomor terbesar dengan kode gedung', () {
+    Slot s(String label) => Slot(label: label, rect: Rect.zero);
+    expect(nextSlotLabel([], 'T'), 'T-01');
+    expect(nextSlotLabel([s('T-01'), s('T-07'), s('Slot A3')], 'T'), 'T-08');
   });
 
   testWidgets('Beranda menampilkan judul dan langkah dalam bahasa Indonesia', (tester) async {

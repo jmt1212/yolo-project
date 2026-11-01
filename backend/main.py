@@ -317,6 +317,8 @@ class DetectIn(BaseModel):
   model: Optional[str] = None
   conf: Optional[float] = None
   overlap: Optional[float] = None
+  # Lot yang diatur manual oleh pengguna untuk foto ini (menggantikan slot foto/foto acuan).
+  slots: Optional[list[SlotIn]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +400,17 @@ def get_building(building_id: str):
   with db_lock:
     db = load_db()
   return building_summary(db, find(db["buildings"], building_id, "Gedung"))
+
+
+@app.get("/api/buildings/{building_id}/layout")
+def get_layout(building_id: str):
+  """Lot dari foto acuan gedung, untuk diisi awal di editor lot pada foto baru."""
+  with db_lock:
+    db = load_db()
+  layout = layout_photo(db, find(db["buildings"], building_id, "Gedung"))
+  if layout is None:
+    return {"width": None, "height": None, "slots": []}
+  return {"width": layout["width"], "height": layout["height"], "slots": layout["slots"]}
 
 
 def clean_name(name, db, skip_id=None):
@@ -531,7 +544,12 @@ def detect(photo_id: str, body: DetectIn):
     # Foto yang slotnya diatur sendiri memakai slot itu; foto lain (mis. unggahan
     # pengunjung) memakai slot dari foto acuan gedungnya.
     layout_warning = None
-    if photo["slots"]:
+    if body.slots is not None:
+      slots = normalize_slots([s.model_dump() for s in body.slots], photo["width"], photo["height"])
+      photo["slots"] = slots  # disimpan supaya "Coba lagi" memakai lot yang sama
+      save_db(db)
+      source = "manual"
+    elif photo["slots"]:
       slots, source = photo["slots"], "photo"
     else:
       building = find(db["buildings"], photo["building_id"], "Gedung")

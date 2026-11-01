@@ -26,7 +26,21 @@ void startHealthChecks() {
   _healthTimer ??= Timer.periodic(const Duration(seconds: 15), (_) => check());
 }
 
-const statusColors = {'empty': Color(0xFF2E9E5B), 'occupied': Color(0xFFD64545), 'anomaly': Color(0xFFE0A019)};
+/// Hijau = kosong, merah = terisi, kuning = anomali (lebih dari satu kendaraan di satu lot).
+const statusColors = {'empty': Color(0xFF2E9E5B), 'occupied': Color(0xFFD64545), 'anomaly': Color(0xFFF2B705)};
+
+/// Warna teks di atas warna status (kuning butuh teks gelap agar terbaca).
+Color statusTextColor(String? status) => status == 'anomaly' ? const Color(0xFF3D2E00) : Colors.white;
+
+/// Nama lot berikutnya, mis. "T-07" jika nomor terbesar yang ada adalah 6.
+String nextSlotLabel(List<Slot> slots, String prefix) {
+  var max = 0;
+  for (final s in slots) {
+    final m = RegExp(r'(\d+)\s*$').firstMatch(s.label);
+    if (m != null && int.parse(m.group(1)!) > max) max = int.parse(m.group(1)!);
+  }
+  return '$prefix-${(max + 1).toString().padLeft(2, '0')}';
+}
 
 const statusLabels = {'empty': 'Kosong', 'occupied': 'Terisi', 'anomaly': 'Anomali'};
 

@@ -27,10 +27,9 @@ class SlotCanvas extends StatefulWidget {
     this.cars = const [],
     this.imageBytes,
     this.readOnly = false,
-    this.mono = false,
   });
 
-  /// Tampilan hasil untuk pengunjung: tanpa gestur, warna monokrom sesuai wireframe.
+  /// Tampilan hasil untuk pengunjung: tanpa gestur, lot diwarnai sesuai status.
   const SlotCanvas.result({
     super.key,
     required this.imageSize,
@@ -44,8 +43,7 @@ class SlotCanvas extends StatefulWidget {
        onAdd = _noAdd,
        onChange = _noChange,
        cars = const [],
-       readOnly = true,
-       mono = true;
+       readOnly = true;
 
   static void _noSelect(int? _) {}
   static void _noAdd(Rect _) {}
@@ -54,7 +52,6 @@ class SlotCanvas extends StatefulWidget {
   final String imageUrl;
   final Uint8List? imageBytes;
   final bool readOnly;
-  final bool mono;
   final Size imageSize;
   final List<Slot> slots;
   final int? selected;
@@ -209,7 +206,6 @@ class _SlotCanvasState extends State<SlotCanvas> {
                         cars: widget.cars,
                         drawing: _drag == _Drag.draw ? Rect.fromPoints(_start, _current) : null,
                         handleRadius: _handleRadius,
-                        mono: widget.mono,
                       ),
                     ),
                   ],
@@ -232,10 +228,8 @@ class _SlotPainter extends CustomPainter {
     required this.cars,
     required this.drawing,
     required this.handleRadius,
-    this.mono = false,
   });
 
-  final bool mono;
   final double scale;
   final List<Slot> slots;
   final int? selected;
@@ -251,10 +245,6 @@ class _SlotPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (mono) {
-      _paintMono(canvas);
-      return;
-    }
     final carPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5
@@ -276,7 +266,7 @@ class _SlotPainter extends CustomPainter {
           ..strokeWidth = isSelected ? 3 : 2
           ..color = color,
       );
-      _label(canvas, slots[i].label, r.topLeft, color);
+      _label(canvas, slots[i].label, r.topLeft, color, textColor: statusTextColor(status));
       if (isSelected) {
         for (final c in [r.topLeft, r.topRight, r.bottomLeft, r.bottomRight]) {
           final h = Rect.fromCenter(center: c, width: handleRadius, height: handleRadius);
@@ -303,33 +293,6 @@ class _SlotPainter extends CustomPainter {
           ..strokeWidth = 2
           ..color = _neutral,
       );
-    }
-  }
-
-  /// Gaya wireframe: terisi = gelap, kosong = putih, anomali = putih dengan tanda "!".
-  void _paintMono(Canvas canvas) {
-    const ink = Color(0xFF262626);
-    for (var i = 0; i < slots.length; i++) {
-      final status = statuses != null && i < statuses!.length ? statuses![i] : 'empty';
-      final r = _toScreen(slots[i].rect);
-      final occupied = status == 'occupied';
-      canvas.drawRect(r, Paint()..color = (occupied ? ink : Colors.white).withValues(alpha: occupied ? 0.55 : 0.3));
-      canvas.drawRect(
-        r.inflate(1),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1
-          ..color = occupied ? Colors.white : ink,
-      );
-      canvas.drawRect(
-        r,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2
-          ..color = occupied ? ink : Colors.white,
-      );
-      final text = status == 'anomaly' ? '! ${slots[i].label}' : slots[i].label;
-      _label(canvas, text, r.topLeft, occupied ? ink : Colors.white, textColor: occupied ? Colors.white : ink);
     }
   }
 
